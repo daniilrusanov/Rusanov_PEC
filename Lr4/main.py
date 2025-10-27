@@ -128,8 +128,7 @@ class CollectiveRankingController(tk.Tk):
         self.geometry("800x700")
 
         # Базові налаштування
-        self.initial_objects_base = ["Яблуко", "Банан", "Апельсин", "Груша", "Ківі", "Манго",
-                                     "Ананас", "Полуниця", "Виноград", "Персик", "Слива", "Абрикос"]
+        self.initial_objects_base = ["Яблуко", "Банан", "Апельсин", "Груша", "Ківі", "Манго", "Ананас"]
         self.experts_list = []
         self.finished_experts = set()
 
@@ -303,7 +302,8 @@ class CollectiveRankingController(tk.Tk):
             self.log_action("Звіт ЛР№2 успішно згенеровано.")
             messagebox.showinfo("Завершено",
                                 "Звіт 'collective_ranking_results.txt' збережено. Дані готові для Кроку 2.")
-            self.prepare_data_for_lab3({'headers': header, 'rows': report_data_rows})
+            string_report_data_rows = [[str(item) for item in row] for row in report_data_rows]
+            self.prepare_data_for_lab3({'headers': header, 'rows': string_report_data_rows})
         except Exception as e:
             self.log_action(f"Помилка при генерації звіту ЛР№2: {e}")
             messagebox.showerror("Помилка", f"Не вдалося зберегти звіт ЛР№2: {e}")
@@ -366,7 +366,6 @@ class CollectiveRankingController(tk.Tk):
             return
 
         self.log_action(f"Розрахунок ЛР№3 буде проведено з початковими коефіцієнтами: {self.initial_weights}")
-        # --- Кінець МОДИФІКАЦІЇ ---
 
         objects = [row[1] for row in self.lab2_results['rows']]
         num_objects = len(objects)
