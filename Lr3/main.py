@@ -127,7 +127,7 @@ class CollectiveRankingController(tk.Tk):
         self.title("Система підтримки прийняття рішень (ЛР 2-3)")
         self.geometry("800x600")
         self.initial_objects_base = ["Яблуко", "Банан", "Апельсин", "Груша", "Ківі", "Манго",
-                                     "Ананас", "Полуниця", "Виноград", "Персик", "Слива", "Абрикос"]
+                                     "Ананас", "Полуниця"]
         self.experts = []
         self.finished_experts = set()
         self.lab2_results = None
