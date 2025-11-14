@@ -1,299 +1,388 @@
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
-from typing import List, Dict, Set, Any, Optional, Tuple
+from typing import Dict, List, Tuple, Optional
+
 
 # --- 1. CORE EXPERT SYSTEM LOGIC (MODIFIED FOR GUI) ---
-# --- (Логіка з ЛР7, але без _ask_user та _explain_why) ---
 
-Rule = Dict[str, Any]
-
-
-class ExpertSystemWithTrust:
+class Rule:
     """
-    Implements a backward-chaining expert system with a Trust Subsystem.
-
-    MODIFIED for Lab 8:
-    - This version is NOT interactive. It receives all facts (working memory)
-      from the GUI at the start.
-    - Removed _ask_user() and _explain_why().
-    - solve() is modified to rely on the pre-filled working memory.
-    - _explain_how() is modified to return a string instead of printing.
+    Клас для представлення однієї продукції (правила)
+    <N, A, P, F>
     """
 
-    def __init__(self,
-                 rules: List[Rule],
-                 questions: Dict[str, str],
-                 conclusions: Dict[str, str]):
+    def __init__(self, name, check_P, check_A, execute_F):
+        self.name = name
+        self.check_P = check_P
+        self.check_A = check_A
+        self.execute_F = execute_F
 
-        self.kb: List[Rule] = rules
-        self.fact_questions: Dict[str, str] = questions
-        self.conclusion_names: Dict[str, str] = conclusions
-        self.wm: Set[str] = set()
-        self.goal_stack: List[Dict[str, Any]] = []
-        self.fired_rules_log: List[Dict[str, Any]] = []
 
-    def reset(self):
-        """Resets the working memory and explanation logs."""
-        self.wm.clear()
-        self.goal_stack = []
+class InferenceEngine:
+    """
+    Клас "Вирішувач". Реалізує алгоритм роботи експертної системи
+    Модифікований для роботи з GUI
+    """
+
+    def __init__(self, rules_base):
+        self.rules_base = rules_base
+        self.log = []
         self.fired_rules_log = []
 
-    def _explain_how(self, final_goal: str) -> str:
+    def reset(self):
+        """Скидає лог роботи"""
+        self.log = []
+        self.fired_rules_log = []
+
+    def log_action(self, message):
+        """Додає запис у протокол роботи."""
+        self.log.append(message)
+
+    def simulate_temperature_after_action(self, working_memory):
         """
-        [Trust Subsystem] Explains "HOW" the system reached a conclusion.
-        Returns the explanation as a string.
+        Симулює зміну температури води після виконання дії.
+        Логіка базується на стані вентилів.
         """
-        goal_name = self.conclusion_names.get(final_goal, final_goal)
-        report_lines = []
+        # Якщо обидва вентилі відкриті (повністю або частково)
+        if working_memory["f3"] and working_memory["f4"]:
+            # Обидва повністю відкриті -> вода тепла
+            working_memory["f5"] = False
+            working_memory["f6"] = False
+            working_memory["f7"] = True
+            return "тепла (обидва вентилі відкриті)"
 
-        report_lines.append("-" * 10 + " [ПОЯСНЕННЯ 'ЯК?'] " + "-" * 10)
-        report_lines.append(f"> Висновок '{goal_name}' отримано так:\n")
+        elif working_memory["f3"] and not working_memory["f4"]:
+            # Тільки гарячий повністю відкритий -> вода гаряча
+            working_memory["f5"] = True
+            working_memory["f6"] = False
+            working_memory["f7"] = False
+            return "гаряча (тільки гарячий вентиль)"
 
-        if not self.fired_rules_log:
-            report_lines.append("> Висновок базується лише на початкових фактах.")
-            report_lines.append(f"> Відомі факти: {', '.join(self.wm)}")
-            return "\n".join(report_lines)
+        elif not working_memory["f3"] and working_memory["f4"]:
+            # Тільки холодний повністю відкритий -> вода холодна
+            working_memory["f5"] = False
+            working_memory["f6"] = True
+            working_memory["f7"] = False
+            return "холодна (тільки холодний вентиль)"
 
-        for i, log_entry in enumerate(self.fired_rules_log, 1):
-            rule = log_entry['rule']
-            facts = log_entry['facts']
-            conclusion_name = self.conclusion_names.get(rule['then'], rule['then'])
+        elif working_memory["f1"] and working_memory["f2"]:
+            # Обидва частково відкриті -> може бути тепла
+            if not working_memory["f5"] and not working_memory["f6"]:
+                working_memory["f7"] = True
+                return "тепла (збалансовані вентилі)"
 
-            report_lines.append(f"КРОК {i}:")
-            report_lines.append(f"  СПИРАЮЧИСЬ НА: {', '.join(facts)}")
-            report_lines.append(f"  Я ВИКОРИСТАВ ПРАВИЛО: '{rule['name']}'")
-            report_lines.append(f"  ТА ОТРИМАВ ФАКТ: '{conclusion_name}'\n")
+        # За замовчуванням залишаємо поточний стан
+        if working_memory["f5"]:
+            return "гаряча"
+        elif working_memory["f6"]:
+            return "холодна"
+        else:
+            return "тепла"
 
-        report_lines.append("> Кінець пояснення.")
-        return "\n".join(report_lines)
-
-    def solve(self, goal: str) -> bool:
+    def run(self, working_memory) -> Tuple[bool, str]:
         """
-        The main backward-chaining inference engine (GUI-driven).
-        """
-        # 1. Base Case: Fact is already known (from toggles or rules)
-        if goal in self.wm:
-            return True
-
-        # 2. Base Case: Goal is a negative fact (e.g., 'not_f2')
-        if goal.startswith('not_'):
-            positive_fact = goal[4:]
-            # Check if the positive fact is in WM.
-            # If 'f2' is in WM, 'not_f2' is False.
-            if positive_fact in self.wm:
-                return False
-            # If 'f2' is NOT in WM, 'not_f2' is True (Closed World Assumption)
-            else:
-                return True
-
-        # 3. Recursive Case: Find rules to prove the goal
-        applicable_rules = [r for r in self.kb if r['then'] == goal]
-
-        if not applicable_rules:
-            # 4. Base Case: No rules to prove this goal.
-            # If it's a base fact (like 'f1'), it would have been
-            # in self.wm if the toggle was on. Since we're here,
-            # it must be False.
-            return False
-
-        # 5. Recursive Step: Try all applicable rules
-        for rule in applicable_rules:
-            self.goal_stack.append({'rule': rule, 'goal': goal})
-            all_premises_true = True
-            proven_premises = []
-
-            for premise in rule['if']:
-                if not self.solve(premise):
-                    all_premises_true = False
-                    break
-                proven_premises.append(premise)
-
-            self.goal_stack.pop()
-
-            if all_premises_true:
-                self.wm.add(goal)  # Add intermediate fact to WM
-                self.fired_rules_log.append({
-                    'rule': rule,
-                    'facts': proven_premises
-                })
-                return True
-
-        return False  # No rule succeeded
-
-    def run_consultation(self,
-                         initial_wm: Set[str],
-                         goal_list: List[str]
-                         ) -> Tuple[Optional[str], str]:
-        """
-        Main entry point for the GUI.
-        Receives the initial WM from toggles and runs the engine.
-        Returns (final_goal_id, final_goal_name).
+        Запускає основний цикл роботи вирішувача.
+        Повертає (success, log_text)
         """
         self.reset()
-        self.wm = initial_wm  # Load WM from GUI toggles
+        self.log_action("--- Запуск вирішувача ---")
+        self.log_action(f"Початковий стан фактів:\n{self.format_facts(working_memory)}\n")
 
-        final_conclusion_id = None
+        iteration = 0
+        max_iterations = 20
 
-        for goal in goal_list:
-            if self.solve(goal):
-                final_conclusion_id = goal
-                break  # Stop on the first goal that succeeds
+        while iteration < max_iterations:
+            iteration += 1
+            rule_fired = False
+            self.log_action(f"\n{'=' * 50}")
+            self.log_action(f"ІТЕРАЦІЯ {iteration}")
+            self.log_action(f"{'=' * 50}")
 
-        if final_conclusion_id:
-            conclusion_name = self.conclusion_names.get(
-                final_conclusion_id, final_conclusion_id
-            )
-            return final_conclusion_id, f"✅ Висновок: {conclusion_name}"
-        else:
-            return None, "❌ Не вдалося дійти жодного висновку."
+            for i, rule in enumerate(self.rules_base, 1):
+                self.log_action(f"\n→ Перевірка правила {i}: {rule.name}")
+
+                # 1. Чи виконується умова блоку P?
+                p_result = rule.check_P(working_memory)
+                self.log_action(f"   [Блок P] Умова використання: {p_result}")
+
+                if p_result:
+                    # 2. Чи виконується умова блоку A?
+                    a_result = rule.check_A(working_memory)
+                    self.log_action(f"   [Блок A] Ядро продукції: {a_result}")
+
+                    if a_result:
+                        # 3. Виконання блоку F
+                        action_description, new_state = rule.execute_F(working_memory)
+                        self.log_action(f"   [Блок F] ✓ ВИКОНАНО: {action_description}")
+                        working_memory.update(new_state)
+                        self.log_action(f"   → Оновлений стан:\n{self.format_facts(working_memory)}")
+
+                        # 🌡️ СИМУЛЯЦІЯ ЗМІНИ ТЕМПЕРАТУРИ
+                        temp_result = self.simulate_temperature_after_action(working_memory)
+                        self.log_action(f"\n   🌡️ Симуляція температури: вода стала {temp_result}")
+                        self.log_action(f"   → Стан після зміни температури:\n{self.format_facts(working_memory)}")
+
+                        # Зберігаємо інформацію про спрацьоване правило
+                        self.fired_rules_log.append({
+                            'rule': rule,
+                            'action': action_description,
+                            'state': dict(working_memory)
+                        })
+
+                        rule_fired = True
+                        self.log_action(f"   ⤴ Повернення на початок списку продукцій")
+                        break
+                else:
+                    self.log_action(f"   ✗ Правило пропущено")
+
+            # Перевірка цільового стану
+            if working_memory["f7"]:
+                self.log_action(f"\n{'=' * 50}")
+                self.log_action("🎯 ЦІЛЬОВИЙ СТАН ДОСЯГНУТО!")
+                self.log_action("   f7 = True (вода тепла)")
+                self.log_action(f"{'=' * 50}")
+                return True, self.get_log_text()
+
+            # Якщо жодне правило не спрацювало
+            if not rule_fired:
+                self.log_action(f"\n{'=' * 50}")
+                self.log_action("⚠ Жодне правило не було активовано.")
+                self.log_action("   Неможливо досягти цільового стану.")
+                self.log_action(f"{'=' * 50}")
+                return False, self.get_log_text()
+
+        self.log_action(f"\n{'=' * 50}")
+        self.log_action("⚠ Перевищено ліміт ітерацій")
+        self.log_action(f"{'=' * 50}")
+        return False, self.get_log_text()
+
+    def format_facts(self, wm):
+        """Форматує факти для зручного відображення"""
+        facts = []
+        for k, v in wm.items():
+            if k == "f8":
+                facts.append(f"   {k} = {v}")
+            else:
+                facts.append(f"   {k} = {v}")
+        return "\n".join(facts)
+
+    def get_log_text(self):
+        """Повертає весь лог як текст"""
+        return "\n".join(self.log)
+
+    def get_explanation(self) -> str:
+        """Повертає пояснення 'ЯК?' досягнуто результат"""
+        if not self.fired_rules_log:
+            return "Жодне правило не було виконано."
+
+        explanation = ["-" * 50]
+        explanation.append("ПОЯСНЕННЯ 'ЯК ДОСЯГНУТО РЕЗУЛЬТАТ?'")
+        explanation.append("-" * 50 + "\n")
+
+        for i, entry in enumerate(self.fired_rules_log, 1):
+            rule = entry['rule']
+            action = entry['action']
+
+            explanation.append(f"КРОК {i}:")
+            explanation.append(f"  Правило: {rule.name}")
+            explanation.append(f"  Дія: {action}")
+            explanation.append("")
+
+        explanation.append("-" * 50)
+        explanation.append("Кінець пояснення")
+        return "\n".join(explanation)
 
 
-# --- 2. GUI APPLICATION (LAB 8 REQUIREMENT) ---
+# --- 2. GUI APPLICATION ---
 
-class CoffeeApp:
+class ShowerApp:
     """
-    Implements the Tkinter GUI for the Coffee Expert System.
-    This class handles all visual elements and event binding.
+    GUI додаток для експертної системи керування душем
     """
 
-    def __init__(self, root: tk.Tk, expert_system: ExpertSystemWithTrust, goals: List[str]):
+    def __init__(self, root: tk.Tk, inference_engine: InferenceEngine):
         self.root = root
-        self.expert_system = expert_system
-        self.final_goals_list = goals
-        self.last_goal_id: Optional[str] = None
-
-        # This dict will store the tk.BooleanVar for each toggle
+        self.engine = inference_engine
         self.fact_vars: Dict[str, tk.BooleanVar] = {}
 
         # --- Setup the UI ---
-        self.root.title("ЛР №8: GUI для Експертної Системи 'Кавомашина'")
-        self.root.geometry("500x550")
+        self.root.title("ЛР №5: GUI Експертної Системи 'Керування Душем'")
+        self.root.geometry("600x700")
 
         style = ttk.Style()
         style.configure("TLabel", font=("Segoe UI", 10))
         style.configure("TButton", font=("Segoe UI", 10, "bold"))
         style.configure("TCheckbutton", font=("Segoe UI", 10))
         style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"))
-        style.configure("Result.TLabel", font=("Segoe UI", 12, "bold"), padding=10)
-        style.configure("Error.Result.TLabel", foreground="red")
+        style.configure("Result.TLabel", font=("Segoe UI", 11, "bold"), padding=10)
         style.configure("Success.Result.TLabel", foreground="green")
+        style.configure("Error.Result.TLabel", foreground="red")
 
         self.create_widgets()
 
     def create_widgets(self):
-        """Creates and packs all GUI components."""
-
+        """Створює всі GUI компоненти"""
         main_frame = ttk.Frame(self.root, padding="15")
         main_frame.pack(fill="both", expand=True)
 
-        # --- 1. Title ---
+        # --- 1. Заголовок ---
         title_label = ttk.Label(
             main_frame,
-            text="Налаштування Кавомашини",
+            text="🚿 Система Керування Душем",
             style="Header.TLabel"
         )
-        title_label.pack(pady=(0, 10))
+        title_label.pack(pady=(0, 15))
 
-        # --- 2. Toggles Frame ---
+        # --- 2. Фрейм з перемикачами (Toggles) ---
         toggles_frame = ttk.LabelFrame(
             main_frame,
-            text=" Вхідні факти (Тумблери) ",
+            text=" Початковий стан фактів ",
             padding="10"
         )
-        toggles_frame.pack(fill="x", expand=True, pady=10)
+        toggles_frame.pack(fill="x", expand=False, pady=10)
 
-        # Dynamically create a checkbutton (toggle) for each base fact
-        for fact_id, question in self.expert_system.fact_questions.items():
-            var = tk.BooleanVar(value=True)  # Default to True
+        # Створюємо перемикачі для кожного факту
+        facts_description = {
+            'f1': 'f1 - Вентиль гарячої води відкритий',
+            'f2': 'f2 - Вентиль холодної води відкритий',
+            'f3': 'f3 - Вентиль гарячої води повністю відкритий',
+            'f4': 'f4 - Вентиль холодної води повністю відкритий',
+            'f5': 'f5 - Вода гаряча',
+            'f6': 'f6 - Вода холодна',
+            'f7': 'f7 - Вода тепла (ЦІЛЬОВИЙ СТАН)',
+        }
+
+        # Значення за замовчуванням
+        default_values = {
+            'f1': True,
+            'f2': True,
+            'f3': False,
+            'f4': False,
+            'f5': False,
+            'f6': True,
+            'f7': False
+        }
+
+        for fact_id, description in facts_description.items():
+            var = tk.BooleanVar(value=default_values[fact_id])
             chk = ttk.Checkbutton(
                 toggles_frame,
-                text=question,
+                text=description,
                 variable=var,
                 style="TCheckbutton"
             )
             chk.pack(anchor="w", padx=5, pady=3)
             self.fact_vars[fact_id] = var
 
-        # --- 3. Control Buttons ---
+        # --- 3. Кнопки керування ---
         button_frame = ttk.Frame(main_frame)
-        button_frame.pack(fill="x", pady=10)
+        button_frame.pack(fill="x", pady=15)
 
         self.run_button = ttk.Button(
             button_frame,
-            text="Отримати результат",
-            command=self.run_consultation,
+            text="▶ Запустити систему",
+            command=self.run_system,
             style="TButton"
         )
         self.run_button.pack(side="left", expand=True, fill="x", padx=(0, 5))
 
         self.how_button = ttk.Button(
             button_frame,
-            text="Пояснити 'Як?'",
+            text="📖 Пояснення 'Як?'",
             command=self.show_explanation,
-            state="disabled"  # Disabled until a result is found
+            state="disabled"
         )
-        self.how_button.pack(side="left", expand=True, fill="x", padx=(5, 0))
+        self.how_button.pack(side="left", expand=True, fill="x", padx=5)
 
-        # --- 4. Result Display ---
+        self.reset_button = ttk.Button(
+            button_frame,
+            text="🔄 Скинути",
+            command=self.reset_system
+        )
+        self.reset_button.pack(side="left", expand=True, fill="x", padx=(5, 0))
+
+        # --- 4. Результат ---
         self.result_label = ttk.Label(
             main_frame,
-            text="Натисніть 'Отримати результат'",
+            text="Натисніть 'Запустити систему' для початку роботи",
             style="Result.TLabel",
-            anchor="center"
+            anchor="center",
+            relief="solid",
+            borderwidth=1
         )
         self.result_label.pack(fill="x", pady=10)
 
-    def run_consultation(self):
-        """
-        Event handler for the 'Run' button.
-        Gathers facts from toggles and runs the expert system.
-        """
-        # 1. Build the initial Working Memory from toggles
-        initial_wm = set()
-        for fact_id, var in self.fact_vars.items():
-            if var.get():  # If toggle is ON
-                initial_wm.add(fact_id)
-
-        # 2. Run the expert system
-        goal_id, result_text = self.expert_system.run_consultation(
-            initial_wm,
-            self.final_goals_list
+        # --- 5. Лог виконання (ScrolledText) ---
+        log_frame = ttk.LabelFrame(
+            main_frame,
+            text=" Лог виконання ",
+            padding="5"
         )
+        log_frame.pack(fill="both", expand=True, pady=(0, 10))
 
-        # 3. Store the goal ID for the 'How?' button
-        self.last_goal_id = goal_id
+        self.log_text = ScrolledText(
+            log_frame,
+            wrap=tk.WORD,
+            font=("Consolas", 9),
+            height=15,
+            state="disabled"
+        )
+        self.log_text.pack(fill="both", expand=True)
 
-        # 4. Update the result label and button states
-        self.result_label.config(text=result_text)
+    def run_system(self):
+        """
+        Обробник кнопки 'Запустити систему'
+        """
+        # 1. Збираємо початковий стан з перемикачів
+        working_memory = {
+            'f1': self.fact_vars['f1'].get(),
+            'f2': self.fact_vars['f2'].get(),
+            'f3': self.fact_vars['f3'].get(),
+            'f4': self.fact_vars['f4'].get(),
+            'f5': self.fact_vars['f5'].get(),
+            'f6': self.fact_vars['f6'].get(),
+            'f7': self.fact_vars['f7'].get(),
+            'f8': 1  # Крок відкриття
+        }
 
-        if goal_id:
+        # 2. Запускаємо систему
+        success, log_text = self.engine.run(working_memory)
+
+        # 3. Оновлюємо лог
+        self.log_text.config(state="normal")
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.insert(tk.END, log_text)
+        self.log_text.config(state="disabled")
+        self.log_text.see(tk.END)  # Прокручуємо до кінця
+
+        # 4. Оновлюємо результат
+        if success:
+            self.result_label.config(
+                text="✅ УСПІХ! Цільовий стан досягнуто (f7 = True)",
+                style="Success.Result.TLabel"
+            )
             self.how_button.config(state="normal")
-            if goal_id == "g_error":
-                self.result_label.configure(style="Error.Result.TLabel")
-            else:
-                self.result_label.configure(style="Success.Result.TLabel")
         else:
+            self.result_label.config(
+                text="❌ НЕВДАЧА: Неможливо досягти цільового стану",
+                style="Error.Result.TLabel"
+            )
             self.how_button.config(state="disabled")
-            self.result_label.configure(style="Error.Result.TLabel")
 
     def show_explanation(self):
         """
-        Event handler for the 'How?' button.
-        Opens a new window with the explanation.
+        Обробник кнопки 'Пояснення'
+        Відкриває нове вікно з поясненням
         """
-        if not self.last_goal_id:
-            return
+        explanation_text = self.engine.get_explanation()
 
-        # 1. Get the explanation string from the expert system
-        explanation_text = self.expert_system._explain_how(self.last_goal_id)
-
-        # 2. Create a new Toplevel window
+        # Створюємо нове вікно
         expl_window = tk.Toplevel(self.root)
         expl_window.title("Пояснення 'Як?'")
-        expl_window.geometry("450x350")
+        expl_window.geometry("500x400")
 
-        # 3. Create a scrolled text widget
+        # Створюємо ScrolledText
         text_widget = ScrolledText(
             expl_window,
             wrap=tk.WORD,
@@ -301,105 +390,103 @@ class CoffeeApp:
             padx=10,
             pady=10
         )
-        text_widget.pack(fill="both", expand=True)
+        text_widget.pack(fill="both", expand=True, padx=10, pady=10)
 
-        # 4. Insert the text and disable editing
+        # Вставляємо текст
         text_widget.insert(tk.END, explanation_text)
         text_widget.config(state="disabled")
+
+        # Кнопка закриття
+        close_btn = ttk.Button(
+            expl_window,
+            text="Закрити",
+            command=expl_window.destroy
+        )
+        close_btn.pack(pady=(0, 10))
+
+    def reset_system(self):
+        """
+        Обробник кнопки 'Скинути'
+        Повертає все до початкових значень
+        """
+        # Скидаємо перемикачі
+        default_values = {
+            'f1': True,
+            'f2': True,
+            'f3': False,
+            'f4': False,
+            'f5': False,
+            'f6': True,
+            'f7': False
+        }
+
+        for fact_id, default_val in default_values.items():
+            self.fact_vars[fact_id].set(default_val)
+
+        # Очищаємо лог
+        self.log_text.config(state="normal")
+        self.log_text.delete(1.0, tk.END)
+        self.log_text.config(state="disabled")
+
+        # Скидаємо результат
+        self.result_label.config(
+            text="Натисніть 'Запустити систему' для початку роботи",
+            style="Result.TLabel"
+        )
+
+        # Вимикаємо кнопку пояснення
+        self.how_button.config(state="disabled")
 
 
 # --- 3. MAIN EXECUTION BLOCK ---
 
 if __name__ == "__main__":
-    # --- Knowledge Base Definition (Copied from Lab 7) ---
-
-    # Questions for base facts (these will become toggles)
-    FACT_QUESTIONS: Dict[str, str] = {
-        'f1': "Кавомашина увімкнена та готова?",
-        'f2': "В резервуарі є вода?",
-        'f3': "Контейнер з кавою заповнений?",
-        'f4': "Контейнер (чашка/стакан) на місці?",
-        'f9': "В капучинаторі є молоко?",
-        'f10': "Бажаєте збити молоко в пінку?",
-        'f12': "Бажаєте міцну каву (Robusta)?",
-    }
-
-    # Descriptions for goals and intermediate facts
-    CONCLUSIONS: Dict[str, str] = {
-        'i_grinding_done': "Виконано помел",
-        'i_base_brewed': "Приготована кавова основа",
-        'i_milk_heated': "Молоко нагріте",
-        'i_milk_frothed': "Молоко збите (пінка)",
-        'g_espresso_arabica': "Еспресо (Arabica) готове",
-        'g_espresso_robusta': "Еспресо (Robusta) готове",
-        'g_cappuccino_arabica': "Капучино (Arabica) готове",
-        'g_cappuccino_robusta': "Капучино (Robusta) готове",
-        'g_hot_milk': "Гаряче молоко готове",
-        'g_milk_foam': "Молочна пінка готова",
-        'g_error': "Стан помилки (Немаe ресурсів)"
-    }
-
-    # Production Rules
-    KB_COFFEE: List[Rule] = [
-        # Coffee Path
-        {'name': "R1: Помел",
-         'if': ['f1', 'f3', 'f4'], 'then': 'i_grinding_done'},
-        {'name': "R2: Заварювання",
-         'if': ['i_grinding_done', 'f2'], 'then': 'i_base_brewed'},
-        # Milk Path
-        {'name': "R3: Нагрів молока",
-         'if': ['f1', 'f9', 'f4'], 'then': 'i_milk_heated'},
-        {'name': "R4: Збивання пінки",
-         'if': ['i_milk_heated', 'f10'], 'then': 'i_milk_frothed'},
-        # Final Goal: Cappuccino
-        {'name': "R6.1: Капучино (Arabica)",
-         'if': ['i_base_brewed', 'i_milk_frothed', 'not_f12'], 'then': 'g_cappuccino_arabica'},
-        {'name': "R6.2: Капучино (Robusta)",
-         'if': ['i_base_brewed', 'i_milk_frothed', 'f12'], 'then': 'g_cappuccino_robusta'},
-        # Final Goal: Espresso
-        {'name': "R5.1: Еспресо (Arabica)",
-         'if': ['i_base_brewed', 'not_f10'], 'then': 'g_espresso_arabica'},
-        {'name': "R5.2: Еспресо (Robusta)",
-         'if': ['i_base_brewed', 'f10', 'not_f9'], 'then': 'g_espresso_robusta'},
-        # Final Goal: Milk Options
-        {'name': "R8: Молочна пінка (без кави)",
-         'if': ['i_milk_frothed', 'not_f3'], 'then': 'g_milk_foam'},
-        {'name': "R7: Гаряче молоко (без кави)",
-         'if': ['i_milk_heated', 'not_f10', 'not_f3'], 'then': 'g_hot_milk'},
-        # Error Handling Rules
-        {'name': "RErr1: Помилка (Немає води)",
-         'if': ['f1', 'f3', 'not_f2'], 'then': 'g_error'},
-        {'name': "RErr2: Помилка (Немає кави)",
-         'if': ['f1', 'not_f3', 'not_f9'], 'then': 'g_error'},
-        {'name': "RErr3: Помилка (Немає молока для пінки)",
-         'if': ['f1', 'f10', 'not_f9'], 'then': 'g_error'},
+    # --- База правил ---
+    RULES_BASE = [
+        Rule(
+            name="Продукція 1: Додати холодної води (якщо гаряча)",
+            check_P=lambda wm: not wm["f4"] and not wm["f7"],
+            check_A=lambda wm: wm["f1"] and wm["f5"],
+            execute_F=lambda wm: (
+                f"ВідкритиВентильХолодноїВодиНа({wm['f8']})",
+                {"f4": True}
+            )
+        ),
+        Rule(
+            name="Продукція 2: Додати гарячої води (якщо холодна)",
+            check_P=lambda wm: not wm["f3"] and not wm["f7"],
+            check_A=lambda wm: wm["f2"] and wm["f6"],
+            execute_F=lambda wm: (
+                f"ВідкритиВентильГарячоїВодиНа({wm['f8']})",
+                {"f3": True}
+            )
+        ),
+        Rule(
+            name="Продукція 3: Закрити гарячу воду",
+            check_P=lambda wm: wm["f3"] and not wm["f7"],
+            check_A=lambda wm: wm["f1"] and wm["f2"] and wm["f5"],
+            execute_F=lambda wm: (
+                "ЗакритиВентильГарячоїВоди()",
+                {"f1": False, "f3": False}
+            )
+        ),
+        Rule(
+            name="Продукція 4: Закрити холодну воду",
+            check_P=lambda wm: wm["f4"] and not wm["f7"],
+            check_A=lambda wm: wm["f1"] and wm["f2"] and wm["f6"],
+            execute_F=lambda wm: (
+                "ЗакритиВентильХолодноїВоди()",
+                {"f2": False, "f4": False}
+            )
+        )
     ]
 
-    # Prioritized list of all possible final goals
-    FINAL_GOALS_LIST: List[str] = [
-        'g_cappuccino_arabica',
-        'g_cappuccino_robusta',
-        'g_espresso_arabica',
-        'g_espresso_robusta',
-        'g_milk_foam',
-        'g_hot_milk',
-        'g_error'  # Fallback goal
-    ]
+    # --- Ініціалізація системи ---
+    engine = InferenceEngine(RULES_BASE)
 
-    # --- System Initialization and GUI Launch ---
-
-    # 1. Initialize the expert system logic
-    expert_system = ExpertSystemWithTrust(
-        KB_COFFEE,
-        FACT_QUESTIONS,
-        CONCLUSIONS
-    )
-
-    # 2. Create the main Tkinter window
+    # --- Створення GUI ---
     root_window = tk.Tk()
+    app = ShowerApp(root_window, engine)
 
-    # 3. Create the App, passing the window and the logic
-    app = CoffeeApp(root_window, expert_system, FINAL_GOALS_LIST)
-
-    # 4. Start the application's main loop
+    # --- Запуск додатку ---
     root_window.mainloop()
